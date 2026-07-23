@@ -17,22 +17,38 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake ninja-build clang-14 lld-14 \
-            libstdc++-12-dev zlib1g-dev libssl-dev \
+            cmake ninja-build clang lld \
             pkg-config git
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Configure CMake
         run: |
+          export CC=clang
+          export CXX=clang++
           cmake -B build_linux \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Shipping \
-            -DCMAKE_C_COMPILER=clang-14 \
-            -DCMAKE_CXX_COMPILER=clang++-14 \
+            -DCMAKE_BUILD_TYPE=Game__Shipping__Linux64 \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
             -DUE4SS_GUI_ENABLED=OFF \
-            -DUE4SS_INPUT_ENABLED=OFF
+            -DUE4SS_INPUT_ENABLED=OFF \
+            -DUE4SS_PROFILERS=OFF \
+            -Wno-dev 2>&1 | tee cmake_configure.log
+
+      - name: Upload configure log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-configure-log
+          path: cmake_configure.log
+          retention-days: 7
 
       - name: Build
-        run: cmake --build build_linux --config Shipping --parallel
+        run: cmake --build build_linux --target UE4SS --parallel
 
       - name: Find and collect output
         run: |

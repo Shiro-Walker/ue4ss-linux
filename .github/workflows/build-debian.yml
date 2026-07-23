@@ -10,14 +10,21 @@ jobs:
       image: debian:bookworm
 
     steps:
-      - name: Install base dependencies
+      - name: Install base tools
         run: |
           apt-get update
           apt-get install -y \
-            git cmake ninja-build \
-            clang lld \
-            libstdc++-12-dev \
-            pkg-config curl ca-certificates
+            curl gnupg ca-certificates \
+            git cmake ninja-build pkg-config
+
+      - name: Install LLVM 17 with libc++
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-17 main" \
+            > /etc/apt/sources.list.d/llvm.list
+          apt-get update
+          apt-get install -y clang-17 lld-17 libc++-17-dev libc++abi-17-dev
 
       - name: Checkout source
         uses: actions/checkout@v4
@@ -35,8 +42,10 @@ jobs:
           cmake -B build_linux \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Game__Shipping__Linux64 \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang-17 \
+            -DCMAKE_CXX_COMPILER=clang++-17 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-stdlib=libc++ -lc++abi" \
             -DUE4SS_GUI_ENABLED=OFF \
             -DUE4SS_INPUT_ENABLED=OFF \
             -DUE4SS_PROFILERS=OFF \
@@ -51,6 +60,14 @@ jobs:
 
       - name: Build
         run: cmake --build build_linux --target UE4SS --parallel
+
+      - name: Verify GLIBC requirements
+        run: |
+          find build_linux -name "libUE4SS*.so" | while read f; do
+            echo "=== $f ==="
+            objdump -p "$f" | grep GLIBC || echo "(no versioned GLIBC symbols)"
+            readelf -d "$f" | grep NEEDED
+          done
 
       - name: Find and collect output
         run: |

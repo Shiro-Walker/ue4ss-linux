@@ -1,0 +1,49 @@
+name: Build libUE4SS for Debian 12
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build clang-14 lld-14 \
+            libstdc++-12-dev zlib1g-dev libssl-dev \
+            pkg-config git
+
+      - name: Configure CMake
+        run: |
+          cmake -B build_linux \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Shipping \
+            -DCMAKE_C_COMPILER=clang-14 \
+            -DCMAKE_CXX_COMPILER=clang++-14 \
+            -DUE4SS_GUI_ENABLED=OFF \
+            -DUE4SS_INPUT_ENABLED=OFF
+
+      - name: Build
+        run: cmake --build build_linux --config Shipping --parallel
+
+      - name: Find and collect output
+        run: |
+          find build_linux -name "libUE4SS*.so" | tee /tmp/found_libs.txt
+          mkdir -p /tmp/artifacts
+          while IFS= read -r f; do cp "$f" /tmp/artifacts/; done < /tmp/found_libs.txt
+          ls -lh /tmp/artifacts/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libUE4SS-debian12-compatible
+          path: /tmp/artifacts/
+          if-no-files-found: error

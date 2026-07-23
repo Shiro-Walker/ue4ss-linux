@@ -5,20 +5,25 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+
     steps:
+      - name: Install base dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git cmake ninja-build \
+            clang lld \
+            libstdc++-12-dev \
+            pkg-config curl ca-certificates
+
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake ninja-build clang lld \
-            pkg-config git
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,8 +32,6 @@ jobs:
 
       - name: Configure CMake
         run: |
-          export CC=clang
-          export CXX=clang++
           cmake -B build_linux \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Game__Shipping__Linux64 \
@@ -45,7 +48,6 @@ jobs:
         with:
           name: cmake-configure-log
           path: cmake_configure.log
-          retention-days: 7
 
       - name: Build
         run: cmake --build build_linux --target UE4SS --parallel

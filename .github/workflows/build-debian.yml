@@ -5,26 +5,16 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container:
-      image: debian:bookworm
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Install base tools
+      - name: Install GCC 13 from PPA
         run: |
-          apt-get update
-          apt-get install -y \
-            curl gnupg ca-certificates \
-            git cmake ninja-build pkg-config
-
-      - name: Install LLVM 17 with libc++
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-17 main" \
-            > /etc/apt/sources.list.d/llvm.list
-          apt-get update
-          apt-get install -y clang-17 lld-17 libc++-17-dev libc++abi-17-dev
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-13 g++-13 libstdc++-13-dev \
+            cmake ninja-build git pkg-config
 
       - name: Checkout source
         uses: actions/checkout@v4
@@ -42,10 +32,9 @@ jobs:
           cmake -B build_linux \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Game__Shipping__Linux64 \
-            -DCMAKE_C_COMPILER=clang-17 \
-            -DCMAKE_CXX_COMPILER=clang++-17 \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-stdlib=libc++ -lc++abi" \
+            -DCMAKE_C_COMPILER=gcc-13 \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
             -DUE4SS_GUI_ENABLED=OFF \
             -DUE4SS_INPUT_ENABLED=OFF \
             -DUE4SS_PROFILERS=OFF \
@@ -65,7 +54,9 @@ jobs:
         run: |
           find build_linux -name "libUE4SS*.so" | while read f; do
             echo "=== $f ==="
+            echo "--- GLIBC version requirements ---"
             objdump -p "$f" | grep GLIBC || echo "(no versioned GLIBC symbols)"
+            echo "--- Dynamic dependencies ---"
             readelf -d "$f" | grep NEEDED
           done
 

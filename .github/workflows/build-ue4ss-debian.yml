@@ -1,0 +1,56 @@
+name: Build UE4SS (Debian-compatible)
+
+# Builds libUE4SS.so on Ubuntu 22.04 (glibc 2.35) with GCC 13 and statically
+# linked libstdc++/libgcc, so the result runs in the Debian 12 (bookworm, glibc
+# 2.36) Pterodactyl Palworld container. Publishes the .so as a build artifact.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (recursive submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install GCC 13
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 pkg-config binutils
+          gcc-13 --version
+          cmake --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure
+        run: |
+          cmake -B build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Game__Shipping__Linux64 \
+            -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13 \
+            -DUE4SS_GUI_ENABLED=OFF -DUE4SS_INPUT_ENABLED=OFF \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+
+      - name: Build
+        run: cmake --build build --target UE4SS -j"$(nproc)"
+
+      - name: Verify runtime deps (want GLIBC_2.35 max, no GLIBCXX)
+        run: |
+          echo "Required versioned symbols:"
+          objdump -T build/Game__Shipping__Linux64/lib/libUE4SS.so \
+            | grep -oE "GLIBC_[0-9.]+|GLIBCXX_[0-9.]+" | sort -V | uniq
+          ls -la build/Game__Shipping__Linux64/lib/libUE4SS.so
+
+      - name: Upload libUE4SS.so artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libUE4SS-debian
+          path: build/Game__Shipping__Linux64/lib/libUE4SS.so
+          if-no-files-found: error

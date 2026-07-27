@@ -17,6 +17,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Merge upstream v3.0.2 (GUObjectArray / is_readable fix)
+        run: |
+          git config user.email ci@local
+          git config user.name palhub-ci
+          git remote add upstream https://github.com/XarminaEu/ue4ss-linux.git
+          git fetch upstream --tags
+          git merge --no-edit v3.0.2 || { git merge --abort; git checkout -f v3.0.2; }
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          echo "Building from commit: $(git rev-parse --short HEAD)"
 
       - name: Install GCC 13
         run: |

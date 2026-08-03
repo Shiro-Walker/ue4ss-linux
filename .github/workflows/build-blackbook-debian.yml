@@ -1,0 +1,113 @@
+name: Build UE4SS (BlackBookOfficial - Debian-compatible)
+
+# Builds BlackBookOfficial's ue4ss-linux-palworld on Ubuntu 22.04 (glibc 2.35)
+# with GCC 13 and statically linked libstdc++/libgcc so the .so runs on Debian
+# 12 (bookworm, glibc 2.36) — our Pterodactyl Palworld container.
+#
+# Source: https://github.com/BlackBookOfficial/ue4ss-linux-palworld (linux-native)
+# Key improvements over our old XarminaEu build:
+#   - Self-healing vtable sweep (survives Palworld updates automatically)
+#   - Hook validation gate (skips hooks that would crash, logs them)
+#   - Per-mod crash isolation (one bad mod cannot kill UE4SS)
+#   - ProcessLocalScriptFunction fix (resolves player login freezes)
+#   - MemberVariableLayout.ini (correct UE5.1 struct offsets for full mode)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Clone BlackBookOfficial source (with submodules)
+        run: |
+          git clone --recurse-submodules --depth=1 \
+            -b linux-native \
+            https://github.com/BlackBookOfficial/ue4ss-linux-palworld.git \
+            .
+          echo "Source commit: $(git rev-parse HEAD)"
+          echo "Source repo: BlackBookOfficial/ue4ss-linux-palworld @ linux-native"
+
+      - name: Install GCC 13
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 pkg-config binutils cmake ninja-build
+          echo "GCC version:"; gcc-13 --version
+          echo "CMake version:"; cmake --version
+
+      - name: Install Rust (>=1.73.0 required)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure (Debian 12 compatible, headless)
+        # Game__Dev__Linux64: BB's standard build type for Linux
+        # GUI=OFF: removes all X11/EGL/OpenGL deps (vtable sweep and hook
+        #          validation live in non-GUI code and are unaffected)
+        # static-libstdc++/libgcc: embeds C++ runtime so the .so runs on
+        #          Debian 12 (GLIBCXX 3.4.30) without a matching host libstdc++
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Game__Dev__Linux64 \
+            -DCMAKE_C_COMPILER=gcc-13 \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DUE4SS_GUI_ENABLED=OFF \
+            -DUE4SS_INPUT_ENABLED=OFF \
+            -DUE4SS_PROFILERS=OFF \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+
+      - name: Build UE4SS
+        run: cmake --build build --target UE4SS -j$(nproc)
+
+      - name: Locate built library
+        id: locate
+        run: |
+          SO=$(find build -name "libUE4SS.so" -type f | head -1)
+          if [ -z "$SO" ]; then
+            echo "ERROR: libUE4SS.so not found after build!"
+            find build -type f -name "*.so" | head -20
+            exit 1
+          fi
+          echo "Found: $SO ($(du -h "$SO" | cut -f1))"
+          echo "so_path=$SO" >> $GITHUB_OUTPUT
+
+      - name: Verify runtime dependencies (Debian 12 target)
+        # Should show GLIBC max 2.35, NO GLIBCXX symbols at all
+        run: |
+          SO="${{ steps.locate.outputs.so_path }}"
+          echo "=== Required versioned symbols ==="
+          objdump -T "$SO" | grep -oE "(GLIBC|GLIBCXX)_[0-9.]+" | sort -V | uniq
+          echo ""
+          echo "=== Checking for Debian 12 blockers ==="
+          BLOCKERS=$(objdump -T "$SO" | grep -oE "(GLIBC|GLIBCXX)_[0-9.]+" | grep -E "GLIBC_2\.(3[6-9]|[4-9][0-9])|GLIBCXX_3\.4\.(3[1-9]|[4-9][0-9])" || true)
+          if [ -n "$BLOCKERS" ]; then
+            echo "FAIL: Found glibc symbols that won't run on Debian 12:"
+            echo "$BLOCKERS"
+            exit 1
+          else
+            echo "PASS: No Debian 12 blockers found"
+          fi
+
+      - name: Collect deployment package
+        run: |
+          mkdir -p artifact
+          cp "${{ steps.locate.outputs.so_path }}" artifact/libUE4SS.so
+          # MemberVariableLayout.ini: hardcoded UE5.1 struct offsets that
+          # enable full mode on stripped Palworld binaries (no debug symbols)
+          cp assets/palworld/MemberVariableLayout.ini artifact/
+          cp assets/UE4SS-settings.ini artifact/
+          cp -r assets/Mods artifact/
+          echo "Artifact contents:"
+          find artifact -type f | sort
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libUE4SS-blackbook-debian12
+          path: artifact/
+          retention-days: 30
+          if-no-files-found: error
